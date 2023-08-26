@@ -1,0 +1,824 @@
+------------------------ RED --------------------------
+
+--------- CVIRTUALES vs DATAGRAMAS
+circuitos virtuales: 
+	se configuran una vez, no hay que hacer ninguna decision
+	teoricamente ocupan menos por enrutador, pero los paquetes de 
+	configuracion son direcciones reales 
+
+datagramas:
+	cada paquete se envia independientemente
+	cada paquete es enrutado individualmente
+	no tiene tiempo de setup 
+	
+--------- ALGORITMOS ENRUTAMIENTO
+
+------------------algoritmo1
+INUNDACION:
+	la idea es que cuando te llega un paquete, lo reenvias por
+	 todas tus conexiones menos por la que vino 
+	tiene problemas que se pueden resolver limitando a quien se 
+	 mandan paquetes.
+
+
+INUNDACION NOT BRAINDEAD: 
+	inunda de la misma manera que antes
+	cada enrutador recuerda que paquetes difundió para ver si acepta un paquete
+	
+	hace una tabla: 
+		<numero de enrutador de origen, count, [n° seq vistos]>
+		donde count limita el tamaño de la lista 
+		
+	usa la tabla para ver si acepta el pkt
+	
+	
+INUNDACION CON CONTADOR DE SALTOS:
+	
+	en el encabezado de cada pkt se agrega un contador = c
+	cuando se reenvia, c --;
+	
+	if (c == 0) descarto pkt;
+	
+	para inicializar c: 
+	
+	dist = distancia(origen , destino);
+	
+	is_dist_known ? c = dist : c = diametro de subred;
+	
+	
+	luego se hace inundacion not braindead
+
+INUNDACION SELECTIVA:
+	
+	idea: se reenvia solo por los lugares que van aproximadamente en la direccion correcta.
+	
+	
+	para esto se necesita saber:
+		- en que direccion va cada linea
+		- en que direccion esta el destino
+
+------------------algoritmo2
+Problema: se quiere un algoritmo de enrutamiento que se adapte a 
+cambios en la topologia y el trafico de red
+	
+Idea: 
+usar Dijkstra cada x tiempo + cuando se modifica la topologia de la red
+	
+ENRUTAMIENTO DE ESTADO DE ENLACE:
+	- cada enrutador usa Dijkstra para encontrar la ruta mas corta 
+	  a los demas enrutadores.
+	- la topologia y retardos en las lineas se distribuyen a cada 
+	  enrutador.
+	
+	
+PROS: 
+- responde rapido a cambios de topologia
+- se usa en OSPF (protocolo usado mucho in internet)
+
+Tareas de un enrutador LSR (link state routing)
+1. Descubrir sus vecinos (hello pkt)
+2. Medir el costo a cada uno de sus vecinos (echo pkt) vuelve rapido, 
+   se mide el tiempo /2 
+3. Construir un lsp diciendo lo que ha aprendido
+4. Enviar este lsp a todos los demás enrutadores (inundacion)
+5. ir a ACTUALIZACION
+
+Datos del lsp:
+-id emisor
+-n° seq
+-edad (propia)
+-[<vecino, retardo vecino>]
+
+se deben repetir los pasos regularmente 
+
+
+ACTUALIZACION:
+- llega un lsp, busco el id en la tabla de lsp
+- chequeo que sea valido
+	if (seq nueva =< seq vieja) 
+		dropeo lsp
+	else (seq nueva > seq vieja) 
+		if (doblecheckeo)
+			actualizo el lsp
+
+- con el set de lsp construyo grafo y corro dijkstra
+
+- actualizo la tabla de enrutamiento
+
+
+PROBLEMAS
+1. n° seq que vuelven a comenzar ¿que se hace? -> se usa numeros 
+   enormes (32 bits)
+
+2. errores en n° seq -> se hace un doble chequeo 
+
+3. reinicio de n° seq (caida) -> se reconoce cuando el enrutador origen 
+   cae y todos los otros enrutadores borran los datos sobre (origen)
+
+4. como terminar con paquetes "naufragos"-> los paquetes tienen edad 
+   maxima
+
+
+Optimizaciones para inundar con lsp
+- llega un lsp, se guarda en un buffer por un pequeño momento, 
+  esperando un posible lsp duplicado o actualizando. cumplido el tiempo 
+  se manda
+- este buffer tambien tiene flags (confirm de recepcion, envio, etc)
+
+
+------------------algoritmo3
+
+ENRUTAMIENTO DE VECTOR DE DISTANCIA
+cada enrutador mantiene una tabla de enrutamiento indexada por cada enrutador de la subred, que tiene el delay estimado y el mejor vecino (MV) para ir hacia el destino (index)
+
+vector de distancia = <destino, distancia estimada>
+- el vector de distancia del enrutador X se denota VD_X
+- VD_X(i) es la distancia desde X al enrutador i
+
+cada enerutador obtiene los retardos de sus vecinos con un mensaje ECHO
+Retardo a vecino x := R_this,x = delay(ECHO)/2
+
+tambien cada enrutador recibe VD_x de cada vecino.
+
+ACTUALIZACION DE LA TABLA DE ENRUTAMIENTO:
+sea ROUT(d(E,i) , MV(E,i)) la entrada i de la tabla de enrutamiento
+
+– d(E, i) = min{R_e,x + VD_X(i) tq X vecino de E}
+	la minima distancia por la cual se puede llegar a i desde E
+    	
+- MV(E,i) = algun vecino tq {X : R_e,x + VD_X(i) = d(E,i)}
+	el primer vecino del camino E -> i
+
+una vez actualiza su ROUT, manda su VD, que es una lista de pares (i,d(E,i))
+
+
+PROPIEDADES:
+- reacciona bien a las buenas noticias
+- reacciona lento a las malas noticias
+ejemplo: 
+se cae A;
+en todas las tablas de la red,  d(X,A) < min (d(X,i)) +1
+por lo que no se reconoce la caida de A en un largo tiempo (muchas iteraciones) hasta que se d(X,A) cruza cierto umbral 
+
+- decidir cual es el umbral es dificil porque puede considerarse como caida una ruta posible, o se puede utilizar una ruta caida sin saberlo
+
+este problema no tiene una buena solucion 
+ 
+
+--------- CONGESTION
+
+objetivo: asegurar que la subred soporte el trafico ofrecido 
+
+Problemas de Alg de ctrl de congestion de TCP estudiados
+- el host de destino demora demasiado en enterarse de la congestion (expiracion de temporizador de retransmisiones o 3 acks duplicados)
+
+- hosts se enteran de perdidas de paquetes, no pueden controlas que paquetes perder y que paquetes no perder
+
+CONGESTION EN CAPA DE RED?? -> se busca solucionar los problemas de TCP
+
+soluciones disponibles en RED:
+	- aumentar recursos
+	- disminuir la carga de la subred
+	
+ESTRATEGIAS:
+	+ identificar congestion:
+	  en cada enrutador se usan colas por cada linea de salida,
+	  cuando una cola tiene mas de x paquetes esperando, se entra
+	  en un estado de advertencia.
+	+ regular trafico:
+		+ PAQUETES REGULADORES (PR):
+		  el router regresa un PR al host de origen pidiendo 
+		  que baje un cambio. el paquete original se modifica
+		  para que no mande nuevos PR.
+		  Cuando llega un PR el host baja un cambio, pero deja 
+		  de escuchar pr por un tiempo. luego escucha en otro 
+		  intervalo de tiempo, si no llegan PR, incrementa el 
+		  trafico de nuevo.
+		  PROBLEMA: la llegada del PR al host puede tener mucha 
+		  latencia.
+		+ PKT REGULADORES SALTO POR SALTO:
+		  SOLUCION: los distintos enrutadores intermedios 
+		  tambien bajan un cambio.
+		+ BIT DE ADVERTENCIA:
+		  Se señaliza la congestion modificando un bit en el 
+		  pkt original. cuando llega a destino, se modifica la 
+		  confirmacion de recepcion avisando de la congestion.
+		  El enrutador en advertencia sigue modificando bits 
+		  mientras siga en ese estado.
+		  El origen disminuye su tasa de transmision hasta 
+		  cierto umbral. 
+		  
+		 - EJEMPLO:
+		  Explicit Congestion Notification (ECN) 
+		  es usada en TCP/IP.
+		  se marcan dos bits en el encabezado IP con distintos
+		  fines:
+		  - 00: transporte no capaz de ECN
+		  - 10: transporte capaz de ECN, ECT(0) 
+		  - 01: transporte capaz de ECN, ECT(1)
+		  - 11: congestión encontrada, CE
+		  
+		  si un paquete esta en una cola congestionada y el 	
+		  enrutador soporta ECN => se cambia el codigo a CE 
+		  para avisar al receptor de la congestion
+		  
+		  El uso de ECN en conexión TCP es opcional.
+		  – Para usar ECN, debe ser negociado al establecer 
+		  conexión TCP incluyendo opciones adecuadas en
+		  segmentos SYN y SYN-ACK
+		  – Se usan dos banderas en encabezado TCP para 
+		  soportar ECN:
+		  - ECE (ECN echo): se usa para mandar indicación de 
+		  congestión alemisor.
+		  - CWR (ventana de congestión reducida): es usada para 
+		  confirmar que la indicación ECE fue recibida.
+		  
+		  Ejecucion de ECN:
+		  1. Se negocia ECN en conexión TCP
+		  2. Emisor manda paquete IP P con ECT(0)
+		  3. P llega a enrutador congestionado que soporta ECN 
+		     y enrutador marca P con CE.
+		  4. Receptor recibe P con CE y manda segmento Q (con 
+		     ACK de P) de vuelta usando bandera ECE prendida.
+		  5. Emisor recibe Q con ECE prendido, entonces emisor 
+		     reduce ventana de congestión.
+		  6. Emisor manda siguiente segmento al otro extremo 
+		     usando bandera CWR prendida para confirmar
+		     recepción de aviso de congestión.
+		  
+	+ filtrar paquetes de manera inteligente:
+	  Situacion: cuando se satura una linea de salida de un 
+	  enrutador se pierden paquetes random.
+	  Problema: evitar la perdida descontrolada de paquetes.
+	  	- no todos los paquetes tienen la misma importancia
+	  
+	  Solucion: descartar paquetes menos importantes antes que se 
+	  llene el buffer.
+	  
+	  Criterios de seleccion:
+	  	- Segun el tipo de aplicacion
+	  		~ strat Vino: descarto los paquetes nuevos
+	  		~ strat leche: descarto los paquetes viejos
+	  	- Segun la importancia de los paquetes
+	  		~ establecer clases de prioridades, luego
+	  		  descarto paquetes de menor prioridad
+	 - EJEMPLO Algoritmo de deteccion temprana aleatoria (RED):
+	  Los routers tienen un promedio movil de longitudes de cola.
+	  Cuando este promedio de una cola C supera el umbral, una 
+	  pequeña fraccion de los paquetes son descartados al azar.
+	  
+	  Por cada uno de los paquetes faltantes, el origen notara la 
+	  falta de ACK y la capa de transporte baja la velocidad de 
+	  transmision.
+	  
+	  Problemas con la seleccion al azar: es mas probable que los 
+	  host emisores mas rapidos pierdan paquetes y bajen su tasa de
+	  transferencia.
+	  
+	  El metodo RED se usa en internet cuando los host no pueden 
+	  recibir ECN (señales explicitas de congestion)
+
+
+--------- PROTOCOLO DE CAPA DE RED: IP
+Proposito: explicar el formato de datagramas.
+IP tiene dos versiones:
+– IPv4: trabaja con direcciones IP de 32 bits.
+– IPv6: trabaja con direcciones IP de 128 bits
+– Los formatos de datagrama de las dos versiones son diferentes.
+
+
+
+
+
+
+
+
+IPv4: 
+
+Datagrama = encabezado + texto
+encabezado = parte fija de 20B + parte opcional.                       
+
+*----------------+-----------------|----------------+-----------------*
+|Version| IHL	 |Type o service|--|     total length		      |
+*----------------+-----------------|----------------+-----------------*
+|       Identification	           |--|DF|MF|  Framgnet offset        |
+*----------------+-----------------|----------------+-----------------*
+|time to live	 | protocol        |     header checksum              |
+*----------------+-----------------|----------------+-----------------*
+| Source address                                                      |
+*----------------+-----------------|----------------+-----------------*
+| Destination address                                                 |
+*----------------+-----------------|----------------+-----------------*
+|                                                                     |
+~                     options 0 or more words                         ~
+~                                                                     ~
+|                                                                     |
+*----------------+-----------------|----------------+-----------------*
+
+IHL 		: longitud de encabezado en 32b ( 5 <= valor <= 15)
+longitud total 	: 2B encabezado + datos <= 65535B
+type of service : los ultimos 2 bits se usan para ECN
+		  los primeros 6 se usan para codificar la clase de 
+		  servicio (rapida, transmision libre de errores, etc)
+protocolo	: 8b a cual proceso entregar el pkt (TCP UDP)
+identificacion 	: se usa para que el host de destino dertermine a que
+		  pkt un fragmento pertenece 
+tiempo de vida 	: debe decrementarse en cada salto si llega a 0 el pkt 
+		  es descartado. se manda una advertencia al host
+		  de origen.
+header checksum	: se usa para detectar errores debe recalcularse en 
+		  cada salto.
+
+
+address en IPv4 : 32b, indican numero de red y numero de maquina.
+		+ las IP address son jerarquicas.
+		
+cada host y router en la internet tiene una IP address 
+
+la ip mas baja es 0.0.0.0, la mas alta es 255.255.255.255
+
+una maquina tiene una IP por cada red a la que esta conectada
+
+
+definicion interfaz: conexion entre host/enrutador y enlace fisico.
+	
+	un enrutador tiene muchas interfaces, una por cada linea de 
+	salida.
+	
+	un host tiene una o dos interfaces:
+		- con ethernet cableada
+		- con inalambrica 802.11
+
+	cada interfaz tiene una IP adr asociada.
+	
+definicion prefijo: una red corresponde a un bloque contiguo del
+	espacio de IP adr llamado prefijo
+
+	prefijos se escriben dando la IP adr mas baja en el bloque y la 
+	cantidad de bits usadas para la direccion de la red. 
+	IP/ 32- 2^log_2(tamaño del bloque)
+	
+	
+	
+	ejemplo: Prefijo 128.208.0.0/24: 
+		- la porcion de la red es de 24 bits
+		- tengo 2⁸ maquinas en la red
+		- la direccion mas baja en el bloque es 128.208.0.0
+
+definicion subred: conjunto de interfaces de dispositivos con la misma 
+	parte de red de la IP addr
+	(ó maquinas que se pueden alcanzar fisicamente entre si sin
+	la necesidad de un enrutador interviniente)
+	
+	las subredes se indican usando prefijos.
+	
+	
+
+CONS de tener una tabla grande 
+- Los enrutadores deben buscar en una tabla para enviar cada paquete y 
+enrutadores en un ISP grande pueden tener que enviar millones de datos 
+por segundo.
+- el costo de actualizar es grande
+
+=> entonces usemos tablas de enrutamiento chicas 
+
+PROBLEMA: asignar una red a una organizacion sisn que se desperdicien
+demasiadas addr y sin que las tablas de enrutamiento crezca mucho
+
+SOLUCION: CIDR (classless inter domain routing)
+en todas las maquinas de la red, la parte de direccion ip para 
+identificar la red es la misma.
+se representa la red asignada con unico prefijo.
+
+nomenclatura: 	- una red de /xx significa que la porcion de la red 
+		tiene xx bits
+		- una mascara esta formada de 1s para los bits que 
+		codifican la red, y de 0s para identificar las maquinas
+		
+		ejemplo: mascara de 194.24.16.0/20 =
+		
+		1111 1111 1111 1111 1111 0000 0000 0000
+		255      .255      .240      .0
+		
+		(con 20 1s, que serian los bits usados para la red y 12
+		0s, por lo que hay 2^12 maquinas = 4096)
+		
+USO DE LA TABLA DE ENRUTAMIENTO CUANDO LLEGA UN PAQUETE:
+1. extraer direccion de destino IP
+2. analizar la tabla entrada por entrada (
+	hacer AND de la mascara de la direccion de destino y comparar
+	el resultado con la direccion de IP de inicio de la subred de 
+	la entrada. )
+3. si coinciden entradas multiples se usa la mascara mas larga (la red 
+	pequeña) 	
+
+ 
+	
+CONTROL DE TAMAÑO DE LAS TABLAS DE ENRUTAMIENTO: 
+Se combinan varios prefijos en un prefijo unico mas grande (superred)
+
+ejemplo: la misma direccion IP que un enrutador trata como parte de un 
+/22, puede ser tratada como un /20 mas grande.
+	
+esto se usa para asignar superredes por regiones geograficas, entonces 
+para un enrutador de argentina, muchas redes de india estan combinadas 
+en un prefijo.
+
+
+NAT: 
+situacion: un ISP tiene una red de /c es decir, se le dan 2^(32-c) 
+	numeros IP para maquinas.Con el esquema actual los clientes no 
+	pueden tener mas de esa cantidad de maquinas usando el servicio 
+	de ISP en un momento dado.
+
+Problema: como aumentar la cantidad de maquinas que usan el servicio de 
+	isp por arriba de 2^(32-c) a pesar de tener una red de /c
+
+Solucion: NAT (network address traduction) 
+	asignar un solo n° de IP a cada organizacion para el trafico 
+	de internet.
+	
+	Dentro de la organizacion cada maquina tiene una direccion IP
+	unica que se usa para el trafico interno. 
+	Cuando un paquete sale de la organizacion y va al isp se 
+	presenta una traduccion de direccion (de la direccion de la 
+	computadora en la organizacion a la direccion IP usada por la 
+	organizacion en internet)
+
+Implementación: Para hacer posible este esquema los 3
+	rangos de direcciones IP se han declarado como privados.
+	– Las organizaciones pueden usarlos internamente cuando deseen.
+	– La única regla es que ningún paquete que contiene estas
+	direcciones pueda aparecer en la internet. Los 3 rangos
+	reservados son:
+		+ [10.0.0.0, 10.255.255.255]/8      (16M hosts)
+		+ [172.16.0.0, 172.31.255.255]/12   (1M  hosts)	
+		+ [192.168.0.0, 192.168.255.255]/16 (64K hosts)
+
+Problema de nat: 
+	¿Como sabe la caja NAT (que hace la traduccion) con que 
+	direccion reemplazar la direccion de un paquete entrante?
+	
+Solucion: guardar asociasion en la caja nat de numero IP la puerto de 
+	origen que viene en el mensaje TCP/UDP dentro del paquete.
+
+Problema2: podria ocurrir que dos conexiones se usaran en un mismo
+	puerto de origen -> el puerto no sirve para identificarlas
+
+Solucion: distinguir entre el n° de puerto usado para identificar la
+	maquina (i.e. IPs en la red interna) y usar el n° de puerto usado
+	por TCP/UDP para identificar la conexion.
+	
+Tabla nat: 
+	- indexado por num  de puerto para identificar la maquina
+	- entrada contiene: (n° de puerto, IP addr)
+	
+Desde la caja NAT desde el ISP
+	- el puerto de origen en el encabezado TCP se extrae y se 
+	usa como indice en la tabla de traduccion de la tabla NAT. 
+	Desde la tabla nat se le inserta la IP addr interna y el puerto TCP.
+
+Desde subred privada hacia NAT hacia ISP
+	- la direccion de origen se reemplaza por la verdadera IP addr
+	de la compañia y el campo puerto de origen TCP se reemplaza por 
+	un indice en la tabla de traduccion de la caja NAT
+	
+PROBLEMAS CON NAT 
+	viola la biyectividad de IP - Maquina (puede haber muchas maq con
+	una misma IP addr)
+	
+	Si se cae la caja NAT y se pierde la tabla, todas las conecciones TCP 
+	se destruyen.
+	
+	Atrasa adopcion de IPv6
+	
+	
+ 
+NAT444: 
+
+- los PSI (proveedores de servicio de internet) tambien pueden tener NAT
+- el espacio reservado para NAT444 es 100.64.0.0/10 -> 2²⁴ = 4M direcciones
+
+problema: el espacio de direcciones de 32 bit ya ha sido agotado en varias 
+	regiones
+	
+	con IPv4 algunos campos del encabezado hacen que el procesamiento de 
+	datagramas en los enrutadores lleve tiempo ( ej: checksum)
+
+
+solucion: IPv6
+
+
+IPv6:
+
+Requisitos: 	
+	- que el encabezado ayude a aumentar la velocidad de procesamiento y
+	reenvio
+	
+Formato de datagrama: 
+	+ Encabezado de longitud fija de 40B 
+	+ capacidad de direccionamiento = 128 bits
+	+ Etiquetado de flujos: 
+		se etiquetan paquetes que pertenecen a un mismo flujo para los 
+		cuales el emisor requiere un manejo especial
+
+		|_______Flujo___________|_______¬Flujo__________|
+		|-Video/ audio		| -Archivos		|
+		|-Usuario de alta	| -Mails		|
+		| prioridad		|			|
+
+
+
+*----------------+-----------------|----------------+-----------------*
+|Version|Priority|		flow label			      |
+*----------------+-----------------|----------------+-----------------*
+|       payload length	           |next hdr        | hop limit       |
+*----------------+-----------------|----------------+-----------------*
+|		source address (128b)			              |
+|							              |
+|							              |
+*----------------+-----------------|----------------+-----------------*
+|		destination address (128b)		              |
+|							              |
+|							              |
+*----------------+-----------------|----------------+-----------------*
+|                                                                     |
+|		data 					              |
+|							              |
+|							              |
+|                                                                     |
+*----------------+-----------------|----------------+-----------------*
+
+<--------------------------------32bits------------------------------->
+
+flow label	: 20b para identificar datagramas del mismo flujo
+
+priority	: dos usos 1) dar prioridad a datagramas de cierto flujo
+		2) dar prioridad a datagramas de ciertas apps sobre otros
+
+payload length 	: 16b numero de bytes en el datagrama IPv6 
+		(luego del hdr de 40b)
+
+hop limit	: 8b el contenido de ese tampo se decrementa en 1 por cada 
+		enrutador que entrega el datagrama. si el contador == 0, rip 
+		datagrama
+		
+next hdr 	: 8b - cual de los 6 encabezados extension de opciones actuales 
+	             le sigue al encabezado
+		     - si este es el ultimo encabezado IP el campo dice en cual
+		     protocolo de transporte entregar el programa
+		     - los encabezados opcionales tmb tienen este campo
+
+IP addr de IPv6: 
+	son escritas como 8 grupos de 4 digitos hexadecimales
+	Ceros a la izquierda de grupos pueden ser omitidos
+	Grupos con 16 bits iguales a 0 pueden reemplazarse con dos “:”
+
+	ej:	8000:0000:0000:0000:0123:4567:89AB:CDEF
+	      o	8000::123:4567:89AB:CDEF	
+
+• Problema: ¿Qué se puede hacer si un datagrama es
+	demasiado grande para pasar por una línea de
+	salida de un enrutador?
+	– Un enrutador descarta paquetes que son demasiado
+	grandes para la línea de salida;
+	– y manda al emisor un mensaje de paquete demasiado
+	grande.
+	– Luego el emisor puede reenviar los datos usando
+	datagramas IP más chicos.
+
+• Los conceptos de prefijo y agregación de prefijos
+	se usan también en IPv6.
+	– Las direcciones IPv6 se siguen asignando a interfaces.
+
+• Adopción de IPv6:
+	– En enero del 2020 el 30 % de los usuarios acceden a
+	Google usando IPv6.
+	– En Argentina la adopción de IPv6 es del 11%, en Brasil
+	del 34%, en USA es del 43%. 
+
+
+OSPF: (Open shortest path first)
+
+• Un sistema autónomo (SA) consiste de un grupo de enrutadores bajo el
+	mismo control administrativo.
+	– A menudo los enrutadores de un proveedor de servicios de internet (PSI) y los
+	enlaces que los interconectan constituyen un SA.
+	– A veces un PSI divide su red en varios SA.
+	– Los enrutadores dentro de un SA corren el mismo algoritmo de enrutamiento
+	llamado protocolo de enrutamiento intra-SA.
+
+• Internet es un conjunto de SAs.
+	– En internet los SA están numerados, cada uno con un número que lo
+	identifica.
+
+OSPF trabaja dentro de un SA.
+OSPF considera una adaptación del método de enrutamiento de estado de enlace.
+
+Motivos para definir un protocolo intra-SA
+- Los protocolos de enrutamiento estudiados no son compatibles
+	con IP por la forma de las tablas de enrutamiento que se usaban.
+- Los protocolos de enrutamiento anteriores estudiados no son
+	adecuados cuando un SA es demasiado grande (se hace pesado
+	consultar y actualizar las tablas de enrutamiento).
+- El modelo de grafo para los protocolos de enrutamiento vistos
+	no es adecuado cuando se trabaja con IP (los destinos son
+	subredes con prefijo en lugar de enrutadores).
+- A veces hay más de un camino más corto a un destino y no se
+	saca provecho de esta situación para balancear la carga que
+	tiene un enrutador.
+
+---------------------- ENLACE -------------------------
+
+Funciones de la capa de enlace de datos (CED)
+control de flujo: evitar que emisor rapido sature receptor lento
+entretramado: flags para detectar el inicio o el fin de un stream de bits
+
+deteccion y correccion de errores
+manejo de colisiones
+
+• Informaciones que debería contener una trama de capa de enlace de datos:
+	❑ encabezado: suele contener: direcciones del origen y de destino;
+	a veces la longitud de la trama, etc.
+	❑ campo de carga útil (el contenido que se quiere enviar).
+	❑ un terminador final (para control de errores)
+
+
+• Se trabaja con:
+	– Confirmaciones de recepción de tramas
+	– Temporización de reenvío
+	– Retransmisiones de tramas (perdidas o dañadas)
+	– Uso de números de secuencia en las tramas (para
+	identificar tramas duplicadas).
+	– Llevar a caballito (piggybacking) – para aprovechar mejor
+	el canal de comunicaciones.
+	– Uso de protocolos como parada y espera o de tubería (go
+	back N, repetición selectiva).
+
+
+• La CED toma de la CR paquetes y los encapsula en tramas.
+• Las tramas tienen una longitud máxima impuesta.
+• Cada paquete de la CR se divide en tramas.
+• En la CR de la máquina de origen hay un proceso que entrega bits a la CED
+	para transmitirlos a la máquina de destino.
+• El trabajo de la CED es transmitir los bits a la máquina de destino para que
+	puedan ser entregados a su CR.
+
+
+
+
+• Flujo entre enrutadores
+1. Al llegar trama a enrutador: el hardware verifica si está libre de errores.
+2. La CED comprueba si esta es la trama esperada y de ser así, entrega el paquete
+dentro de la trama al software de enrutamiento.
+3. El software de enrutamiento elije la línea de salida adecuada y entrega el
+paquete a la CED para enviarlo.
+
+Problema: ¿Cómo asegurar que una trama se entregue?
+Solución: Si una trama no se entregó, entonces el emisor la reenvía.
+
+• Regresar tramas de control con confirmaciones de
+recepción positivas o negativas de las tramas que llegan.
+• Método que usa temporizador de retransmisiones en la CED.
+	❑ Al enviarse una trama, se inicia un temporizador.
+	❑ Si la trama o la confirmación de recepción se pierden el
+	temporizador expirará. Luego, se puede enviar la trama de
+	nuevo.
+	❑ Si la confirmación de recepción llega antes que el
+	temporizador expira, entonces el temporizador se cancela.
+
+
+
+
+
+• Problema: la misma trama llega dos o más veces al
+receptor y la CED la pasa a la CR más de una vez.
+❑ ¿Cómo hacer para evitar entregar a la CR tramas repetidas?
+• Solución: método que asigna números de secuencia a
+las tramas que salen.
+❑ El receptor tiene una función que dado un número de
+secuencia de la trama que llega decide si ella es duplicada.
+
+
+• Problema: ¿Cómo transmitir datos entre dos máquinas y
+en ambas direcciones eficientemente? (recordar lo que
+hace TCP)
+• Solución: llevar a caballito (piggybacking).
+– cuando llega una trama de datos, el receptor se aguanta y espera
+hasta que la CR le pasa el siguiente paquete P.
+– La confirmación de recepción se anexa a la trama de datos de salida
+– con P - (usando el campo ack en el encabezado de la trama).
+
+• ¿Qué pasa Si la CED espera demasiado por una trama a la cual
+superponer el ack?
+o Si se espera demasiado el temporizador del emisor expirará y la trama
+será retransmitida.
+• Problema: ¿Cómo hacer para evitar que pase eso?
+• Solución: Si llega en menos de x msegs un paquete, el ack se
+superpone a él; sino, la CED manda trama de ack independiente.
+
+• Problema: Encontrar una alternativa más económica para conectar varias
+	 máquinas entre sí.
+
+• Solución: Usar canales de difusión.
+	- En un canal de difusión están conectadas varias máquinas
+	que quieren transmitir tramas por el canal.
+	- Si una máquina envía un mensaje, todas las demás lo
+	reciben.
+• Evaluación
+	- Esta es una alternativa mucho más económica.
+	- Pero según veremos los canales de difusión introducen
+	algunos problemas nuevos de diseño
+
+
+
+Tipos de canales de difusión
+	– Inalámbricos
+		• En su forma más simple las máquinas se comunican
+		entre sí sin uso de cables.
+		• P.ej. por uso de señales de radio o de microondas.
+	– Cableados
+		• Las máquinas se comunican entre sí por medio de
+		cables.
+		• P.ej. De un cable coaxial salen cables a distintas
+		máquinas.
+		• P.ej. de un concentrador salen cables a distintas
+		máquinas (es la idea de triple o de zapatilla).
+
+• Problema: ¿cómo evitar colisiones?
+	– O sea, ¿cómo hacer para que ellas no ocurran, o que
+	ocurran lo menos posible?
+• Solución: definir una subcapa de la capa de enlace
+	de datos que se encargue del control de colisiones.
+	- Esta subcapa de la CED se llama subcapa de control de
+	acceso al medio (SCAM).
+	- La subcapa MAC es una subcapa inferior de la CED.
+
+
+
+
+
+
+Evitar colisiones en inalambricos
+
+
+
+
+
+
+
+Evitar colisiones en cableadas
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---------------------- FISICA -------------------------
